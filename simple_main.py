@@ -45,33 +45,56 @@ args = parser.parse_args()
 if not os.path.exists(args.weight_dir):
     os.makedirs(args.weight_dir)
 
-model = Sequential()
 
-lsk = [False]*3
+class Counter:
+    def __init__(self):
+        self.units = 8
 
-zip_list = []
-if len(args.layers) != 0:
-    zip_list.append(args.layers)
-    lsk[0] = True
-if len(args.strides) != 0:
-    zip_list.append(args.strides)
-    lsk[1] = True
-if len(args.kernel) != 0:
-    zip_list.append(args.kernel)
-    lsk[2] = True
+    def get_layer(self, layer_name, strides=1, kernel_size=3, units=None):
+        self.units *= 2
+        if units:
+            self.units = units
+        if layer_name == 'c':
+            return Conv3D(filters=self.units,
+                          strides=[strides]*3,
+                          kernel_size=[kernel_size]*3)
+        if layer_name == 'l':
+            return ConvLSTM2D(filters=self.units,
+                              strides=[strides]*2,
+                              kernel_size=[kernel_size]*2)
+        if layer_name == 'q':
+            return ConvLSTM2D(filters=self.units,
+                              strides=[strides]*2,
+                              kernel_size=[kernel_size]*2,
+                              return_sequences=True)
+        if layer_name == 'd':
+            return Dense(units=self.units)
+        if layer_name == 'f':
+            return Flatten()
+        if layer_name == 'r':
+            return ReLU()
+        if layer_name == 'b':
+            return BatchNormalization(axis=-1)
 
-length = -1
-for agmt in zip_list:
-    if length >= 0:
-        if len(agmt) != length:
-            exit()
-    else:
-        length = len(agmt)
-del length
+
+args.layers = args.layers.split(',')
+args.strides = args.strides.split(',')
+args.kernel_size = args.kernel_size.split(',')
+ 
+assert args.layers and args.strides and args.kernel_size
+assert len(args.layers) == len(args.strides) == len(args.kernel_size)
+
+input = Input(shape=[args.grid]*3+[1])
+layered = input
 
 
-if len(model.layers) == 0:
-    model.add(Flatten(input_shape=[args.grid]*3))
-    model.add(Dense(units=40, activation='relu'))
+((x_train, y_train),
+ (x_test, y_test)) = loader.convert_data(args.train_files,
+                                         args.test_files,
+                                         num_points=args.points,
+                                         rotate=args.rotate,
+                                         rotate_val=args.rotate_val,
+                                         grid_size=args.grid)
+
 
 K.clear_session()

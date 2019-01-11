@@ -104,6 +104,7 @@ def rotate_point_cloud(batch_data):
 def convert(files,
             points=1024,
             rotate=False,
+            grid_size=20,
             epsilon=.1):
 
     def convert_to_3d(pointset,
@@ -130,7 +131,8 @@ def convert(files,
     dpics = []
 
     for pointset in data:
-        dpics.append(convert_to_3d(pointset))
+        dpics.append(convert_to_3d(
+            pointset, grid_size=grid_size, epsilon=epsilon))
 
     dpics = np.array(dpics).astype('float')
 
@@ -143,15 +145,18 @@ def convert_data(train_files,
                  test_files,
                  num_points=1024,
                  rotate=False,
-                 rotate_val=False):
+                 rotate_val=False,
+                 grid_size=20):
     train_files = provider.getDataFiles(train_files)
     test_files = provider.getDataFiles(test_files)
 
     x_train, y_train = convert(train_files,
                                points=num_points,
-                               rotate=rotate)
+                               rotate=rotate,
+                               grid_size=grid_size)
     x_test, y_test = convert(test_files,
                              points=num_points,
-                             rotate=rotate_val)
+                             rotate=rotate_val,
+                             grid_size=grid_size)
 
     return (x_train, y_train), (x_test, y_test)
