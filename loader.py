@@ -101,6 +101,15 @@ def rotate_point_cloud(batch_data):
     return rotated_data
 
 
+def convert_str(*args, **kwargs):
+    if args:
+        args = list(args)
+        args[0] = provider.getDataFiles(args[0])
+    if 'files' in kwargs.keys():
+        kwargs['files'] = provider.getDataFiles(kwargs['files'])
+    return convert(*args, **kwargs)
+
+
 def convert(files,
             points=1024,
             rotate=False,

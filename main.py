@@ -4,11 +4,13 @@ import time
 from argparse import ArgumentParser
 
 import keras
+import tensorflow as tf
 from keras import backend as K
+from keras.backend.tensorflow_backend import set_session
 from keras.layers import *
 from keras.losses import sparse_categorical_crossentropy
 from keras.models import *
-from keras.regularizers import l2
+from keras.regularizers import l1_l2
 from matplotlib import pyplot as plt
 
 import loader
@@ -20,16 +22,24 @@ parser.add_argument('--batch_size', type=int, default=64)
 parser.add_argument('--grid', type=int, default=20)
 parser.add_argument('--optimizer', type=str, default='rmsprop')
 parser.add_argument('--debug', action='store_true')
+parser.add_argument('--interval', type=int, default=4)
+parser.add_argument('--first_layer', type=int, default=4)
+parser.add_argument('--l1', type=float, default=0.)
+parser.add_argument('--l2', type=float, default=0.)
+parser.add_argument('--cuda', type=str, default='0')
 rotation = parser.add_argument_group('rotation')
 rotation.add_argument('--rotate', action='store_true')
 rotation.add_argument('--rotate_val', action='store_true')
-rotation.add_argument('--per_rotation', type=int, default=5)
+rotation.add_argument('--per_rotation', type=int, default=1)
 earlystopping = parser.add_argument_group('earlystopping')
 earlystopping.add_argument('--early', action='store_true')
 earlystopping.add_argument('--patience', type=int, default=10)
 dropout = parser.add_argument_group('dropout')
 dropout.add_argument('--dropout', type=float, default=.3)
-dropout.add_argument('--rec_drop', type=float, default=.2)
+dropout.add_argument('--rec_drop', type=float, default=0.)
+history = parser.add_argument_group('--history')
+history.add_argument('--save', action='store_true')
+history.add_argument('--plot', action='store_true')
 parser.add_argument('--train_files',
                     default='./data/modelnet40_ply_hdf5_2048/train_files.txt')
 parser.add_argument('--test_files',
@@ -42,6 +52,11 @@ structure.add_argument('--layers', type=str, default='',
 args = parser.parse_args()
 
 
+# setting GPU usage
+config = tf.ConfigProto()
+config.gpu_options.visible_device_list = args.cuda
+set_session(tf.Session(config=config))
+
 if not os.path.exists(args.weight_dir):
     os.makedirs(args.weight_dir)
 
@@ -53,11 +68,12 @@ with open('.gitignore', 'r') as file:
 
 
 class Counter:
-    def __init__(self):
-        self.units = 8
+    def __init__(self, interval=4, starting_at=4):
+        self.units = starting_at
+        self.interval = interval
 
     def get_layer(self, layer_name, strides=1, kernel_size=3, units=0):
-        self.units *= 2
+        self.units *= self.interval
         if units:
             self.units = units
         if layer_name == 'c':
@@ -68,12 +84,16 @@ class Counter:
             return ConvLSTM2D(filters=self.units,
                               strides=[strides]*2,
                               kernel_size=[kernel_size]*2,
+                              recurrent_initializer='orthogonal',
+                              recurrent_regularizer=l1_l2(args.l1, args.l2),
                               recurrent_dropout=args.rec_drop)
         if layer_name == 'q':
             return ConvLSTM2D(filters=self.units,
                               strides=[strides]*2,
                               kernel_size=[kernel_size]*2,
                               return_sequences=True,
+                              recurrent_initializer='orthogonal',
+                              recurrent_regularizer=l1_l2(args.l1, args.l2),
                               recurrent_dropout=args.rec_drop)
         if layer_name == 'd':
             return Dense(units=self.units)
@@ -86,11 +106,11 @@ class Counter:
         if layer_name == 'o':
             return Dropout(rate=args.dropout)
         if layer_name == 't':
-            return Activation(activation=activations.tanh)
+            return Activation(activation='tanh')
         if layer_name == 's':
-            return Softmax()
+            return Activation(activation='softmax')
         if layer_name == 'g':
-            return Activation(activation=activations.sigmoid)
+            return Activation(activation='sigmoid')
 
 
 def transform(layers):
@@ -123,7 +143,7 @@ layers = transform(args.layers)
 
 
 input = Input(shape=[args.grid]*3+[1])
-counter = Counter()
+counter = Counter(args.interval, args.first_layer)
 layered = input
 for l, s, k, u in layers:
     layered = counter.get_layer(l, s, k, u)(layered)
@@ -148,6 +168,7 @@ if args.debug:
     # print(data.shape, label.shape, test_data.shape, test_label.shape)
     x_debug = np.random.randn(*([args.batch_size]+[args.grid]*3+[1]))
     print(model.predict(x_debug, batch_size=args.batch_size).shape)
+    K.clear_session()
     sys.exit()
 
 ModelCheckPoint = keras.callbacks.ModelCheckpoint(
@@ -176,8 +197,19 @@ if args.rotate:
                          epochs=args.per_rotation,
                          validation_data=(test_data, test_label))
 elif args.rotate_val:
-    for epoch in range(1, args.epochs+1):
-        (x_test, y_test) = loader.convert(args.test_files, grid_size=args.grid)
+    ((data, label),
+     (test_data, test_label)) = loader.convert_data(
+        args.train_files,
+        args.test_files,
+        args.points,
+        rotate=True,
+        rotate_val=args.rotate_val,
+        grid_size=args.grid)
+    for epoch in range(1, args.epochs+1, args.per_rotation):
+        (test_data, test_label) = loader.convert_str(files=args.test_files,
+                                                     points=args.points,
+                                                     rotate=True,
+                                                     grid_size=args.grid)
         print('epoch: {}/{}'.format(epoch, args.epochs))
         loss = model.fit(x=data,
                          y=label,
@@ -202,7 +234,7 @@ else:
                                 EarlyStopping],
                      validation_data=(test_data, test_label))
 
-if args.save_history:
+if args.save:
     np.save(file='./history', arr=loss.history)
 
 if args.plot:
@@ -215,10 +247,8 @@ if args.plot:
 (x_train, y_train), (x_test, y_test) = loader.convert_data(
     args.train_files, args.test_files, args.points, grid_size=args.grid)
 (loss, acc) = model.evaluate(x=x_train, y=y_train)
-print()
 print('training loss: {}, training accuracy: {}'.format(loss, acc))
 (loss, acc) = model.evaluate(x=x_test, y=y_test)
-print()
 print('testing loss: {}, testing accuracy: {}'.format(loss, acc))
 
 K.clear_session()
