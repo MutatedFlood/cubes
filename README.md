@@ -2,6 +2,8 @@
 
 ### with `ConvLSTM2D`, `Conv3D`, and `LSTM`
 
+#### For how to use `main.py` to create a model quickly, please read the `parser` `help` section(it's near the top!) of `main.py`
+
 `ConvLSTM2D` is primarily used for video classification, however, due to its input format, we can also use it to classify *3D* data.
 
 This project is a comparison between [PointNet][p-net], and a _very_ simple model, that has just 3 layers of `Conv3D`, or `ConvLSTM2D`. Then a `Dropout` layer, followed by a `Flatten` layer, and at last reaches a `Dense` layer with `Softmax` activation.
@@ -12,9 +14,9 @@ The loss I use is `categorical_crossentropy`, and there are _40_ classes to choo
 
 >  [`converter`](converter.py): helper module.  
 >
->  *	`load_data`: load points in $(N, points, 3)$ format. ==usage==: used with [PointNet][p-net] style classification
->  *	`convert`: load points in $(N, points, 3)$ format, then convert it to $(N, grid\_size, grid\_size,gird\_size, 1 )$  format. ==usage==: used with `3D` classification data.
->  *	[`rotate_point_cloud`](converter_copy.py): rotating pointcloud arbitraily about $z\ \ axis$ 
+>  *	`load_data`: load points in $$(N, points, 3)$$ format. ==usage==: used with [PointNet][p-net] style classification
+>  *	`convert`: load points in $$(N, points, 3)​$$ format, then convert it to $$(N, grid\_size, grid\_size,gird\_size, 1 )​$$  format. ==usage==: used with `3D` classification data.
+>  *	[`rotate_point_cloud`](converter_copy.py): rotating pointcloud arbitraily about $$z\ \ axis$$ 
 >
 >  [`provider`](provider.py): helper module. A direct copy from the original [PointNet GitHub Repo][p-net repo]
 

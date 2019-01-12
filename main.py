@@ -16,39 +16,85 @@ from matplotlib import pyplot as plt
 import loader
 
 parser = ArgumentParser()
-parser.add_argument('epochs', type=int)
-parser.add_argument('--points', type=int, default=1024)
-parser.add_argument('--batch_size', type=int, default=64)
-parser.add_argument('--grid', type=int, default=20)
-parser.add_argument('--optimizer', type=str, default='rmsprop')
-parser.add_argument('--debug', action='store_true')
-parser.add_argument('--interval', type=int, default=4)
-parser.add_argument('--first_layer', type=int, default=4)
-parser.add_argument('--l1', type=float, default=0.)
-parser.add_argument('--l2', type=float, default=0.)
-parser.add_argument('--cuda', type=str, default='0')
+parser.add_argument('epochs', type=int,
+                    help='Total epochs to train')
+parser.add_argument('--points', type=int, default=1024,
+                    help='How many points to preserve(max 2048) when training and testing')
+parser.add_argument('--batch_size', type=int, default=64,
+                    help="How many sets of 'pictures' goes into the model during training")
+parser.add_argument('--grid', type=int, default=20,
+                    help='The dimension of a 3d picture')
+parser.add_argument('--optimizer', type=str, default='rmsprop',
+                    help='Optimizer of choice')
+parser.add_argument('--debug', action='store_true',
+                    help='debug mode. Terminates the program early(before training)')
+parser.add_argument('--interval', type=int, default=4,
+                    help="The rate the stacked layers' filters are increasing")
+parser.add_argument('--first_layer', type=int, default=4,
+                    help='How many filters the first layer will have')
+structure = parser.add_argument_group('structure')
+structure.add_argument('--layers', type=str, default='',
+                       help='structure of the model')
+'''
+every layer is represented by name,strides,kernel_size,units, which are separated by ','
+[ name,strides,kernel_size,units ]
+different layers are seperated by '.'
+
+name:
+'d': `Dense`
+'c': `Conv3D`
+'q': `ConvLSTM2D`, return_sequences=True
+'l': `ConvLSTM2D`, return_sequences=False
+'f': `Flatten`
+'o': `Dropout`
+'b': `BatchNormalization`
+'r': `ReLU`
+'s': `Softmax`
+'g': `Sigmoid`
+'t': `tanh`
+
+strides: defaults to 1 (no input. example: d, or d,, or d,,3,1)
+
+kernel_size: defaults to 3 (no input. example: d,2,,4, or d,,,)
+
+units: defaults to be interval * previous_filters. Last `Dense` layer will have units=40
+
+'''
+
+parser.add_argument('--l1', type=float, default=0.,
+                    help='L1 penalty applied on recurrent layers')
+parser.add_argument('--l2', type=float, default=0.,
+                    help='L2 penalty applied on recurrent layers')
+parser.add_argument('--cuda', type=str, default='0',
+                    help='Which cuda device is to be used')
 rotation = parser.add_argument_group('rotation')
-rotation.add_argument('--rotate', action='store_true')
-rotation.add_argument('--rotate_val', action='store_true')
-rotation.add_argument('--per_rotation', type=int, default=1)
+rotation.add_argument('--rotate', action='store_true',
+                      help='Whether or not to rotate the training data')
+rotation.add_argument('--rotate_val', action='store_true',
+                      help='Whether or not to rotate the validation data')
+rotation.add_argument('--per_rotation', type=int, default=1,
+                      help='How many epochs for every rotation')
 earlystopping = parser.add_argument_group('earlystopping')
-earlystopping.add_argument('--early', action='store_true')
-earlystopping.add_argument('--patience', type=int, default=10)
+earlystopping.add_argument('--early', action='store_true',
+                           help='Whether to apply `EarlyStopping`')
+earlystopping.add_argument('--patience', type=int, default=10,
+                           help='How many epochs to wait for an improvement')
 dropout = parser.add_argument_group('dropout')
-dropout.add_argument('--dropout', type=float, default=.3)
-dropout.add_argument('--rec_drop', type=float, default=0.)
+dropout.add_argument('--dropout', type=float, default=.3,
+                     help='The rate of dropout for every dropout layer')
+dropout.add_argument('--rec_drop', type=float, default=0.,
+                     help='The rate of recurrent dropout for every recurrent layer')
 history = parser.add_argument_group('--history')
-history.add_argument('--save', action='store_true')
-history.add_argument('--plot', action='store_true')
+history.add_argument('--save', action='store_true',
+                     help='Whether or not to save training loss history to disk')
+history.add_argument('--plot', action='store_true',
+                     help='Whthter or not to plot and save training loss')
 parser.add_argument('--train_files',
                     default='./data/modelnet40_ply_hdf5_2048/train_files.txt')
 parser.add_argument('--test_files',
                     default='./data/modelnet40_ply_hdf5_2048/test_files.txt')
 parser.add_argument('--weight_dir', type=str,
                     default='weights')
-structure = parser.add_argument_group('structure')
-structure.add_argument('--layers', type=str, default='',
-                       help='structure of the model')
 args = parser.parse_args()
 
 
@@ -114,15 +160,22 @@ class Counter:
 
 
 def transform(layers):
+    if not layers:
+        print('--layer flag cannot be empty')
+        sys.exit()
     layers = layers.split('.')
     for i in range(len(layers)):
         layers[i] = layers[i].split(',')
         try:
             layers[i][1] = int(layers[i][1])
+        except IndexError:
+            layers[i].append(1)
         except ValueError:
             layers[i][1] = 1
         try:
             layers[i][2] = int(layers[i][2])
+        except IndexError:
+            layers[i].append(3)
         except ValueError:
             layers[i][2] = 3
         try:
