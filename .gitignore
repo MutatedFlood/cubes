@@ -1,2 +1,6 @@
 .DS_Store
 __*__
+data
+weight_dir
+weights
+wget*

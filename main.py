@@ -1,0 +1,224 @@
+import os
+import sys
+import time
+from argparse import ArgumentParser
+
+import keras
+from keras import backend as K
+from keras.layers import *
+from keras.losses import sparse_categorical_crossentropy
+from keras.models import *
+from keras.regularizers import l2
+from matplotlib import pyplot as plt
+
+import loader
+
+parser = ArgumentParser()
+parser.add_argument('epochs', type=int)
+parser.add_argument('--points', type=int, default=1024)
+parser.add_argument('--batch_size', type=int, default=64)
+parser.add_argument('--grid', type=int, default=20)
+parser.add_argument('--optimizer', type=str, default='rmsprop')
+parser.add_argument('--debug', action='store_true')
+rotation = parser.add_argument_group('rotation')
+rotation.add_argument('--rotate', action='store_true')
+rotation.add_argument('--rotate_val', action='store_true')
+rotation.add_argument('--per_rotation', type=int, default=5)
+earlystopping = parser.add_argument_group('earlystopping')
+earlystopping.add_argument('--early', action='store_true')
+earlystopping.add_argument('--patience', type=int, default=10)
+dropout = parser.add_argument_group('dropout')
+dropout.add_argument('--dropout', type=float, default=.3)
+dropout.add_argument('--rec_drop', type=float, default=.2)
+parser.add_argument('--train_files',
+                    default='./data/modelnet40_ply_hdf5_2048/train_files.txt')
+parser.add_argument('--test_files',
+                    default='./data/modelnet40_ply_hdf5_2048/test_files.txt')
+parser.add_argument('--weight_dir', type=str,
+                    default='weights')
+structure = parser.add_argument_group('structure')
+structure.add_argument('--layers', type=str, default='',
+                       help='structure of the model')
+args = parser.parse_args()
+
+
+if not os.path.exists(args.weight_dir):
+    os.makedirs(args.weight_dir)
+
+with open('.gitignore', 'r') as file:
+    content = file.read()
+    if not args.weight_dir in content:
+        with open('.gitignore', 'a') as file:
+            file.write('\n'+args.weight_dir)
+
+
+class Counter:
+    def __init__(self):
+        self.units = 8
+
+    def get_layer(self, layer_name, strides=1, kernel_size=3, units=0):
+        self.units *= 2
+        if units:
+            self.units = units
+        if layer_name == 'c':
+            return Conv3D(filters=self.units,
+                          strides=[strides]*3,
+                          kernel_size=[kernel_size]*3)
+        if layer_name == 'l':
+            return ConvLSTM2D(filters=self.units,
+                              strides=[strides]*2,
+                              kernel_size=[kernel_size]*2,
+                              recurrent_dropout=args.rec_drop)
+        if layer_name == 'q':
+            return ConvLSTM2D(filters=self.units,
+                              strides=[strides]*2,
+                              kernel_size=[kernel_size]*2,
+                              return_sequences=True,
+                              recurrent_dropout=args.rec_drop)
+        if layer_name == 'd':
+            return Dense(units=self.units)
+        if layer_name == 'f':
+            return Flatten()
+        if layer_name == 'r':
+            return ReLU()
+        if layer_name == 'b':
+            return BatchNormalization(axis=-1)
+        if layer_name == 'o':
+            return Dropout(rate=args.dropout)
+        if layer_name == 't':
+            return Activation(activation=activations.tanh)
+        if layer_name == 's':
+            return Softmax()
+        if layer_name == 'g':
+            return Activation(activation=activations.sigmoid)
+
+
+def transform(layers):
+    layers = layers.split('.')
+    for i in range(len(layers)):
+        layers[i] = layers[i].split(',')
+        try:
+            layers[i][1] = int(layers[i][1])
+        except ValueError:
+            layers[i][1] = 1
+        try:
+            layers[i][2] = int(layers[i][2])
+        except ValueError:
+            layers[i][2] = 3
+        try:
+            layers[i][3] = int(layers[i][3])
+        except IndexError:
+            layers[i].append(0)
+        except ValueError:
+            layers[i][3] = 0
+
+    for ind in reversed(range(len(layers))):
+        if layers[ind][0] in ['d']:
+            layers[ind][-1] = 40
+            break
+    return layers
+
+
+layers = transform(args.layers)
+
+
+input = Input(shape=[args.grid]*3+[1])
+counter = Counter()
+layered = input
+for l, s, k, u in layers:
+    layered = counter.get_layer(l, s, k, u)(layered)
+
+model = Model(inputs=[input], outputs=[layered])
+
+model.compile(optimizer=args.optimizer,
+              loss=sparse_categorical_crossentropy,
+              metrics=['acc'])
+
+model.summary()
+
+if args.debug:
+    # ((data, label),
+    #  (test_data, test_label)) = loader.convert_data(
+    #     args.train_files,
+    #     args.test_files,
+    #     args.points,
+    #     rotate=True,
+    #     rotate_val=args.rotate_val,
+    #     grid_size=args.grid)
+    # print(data.shape, label.shape, test_data.shape, test_label.shape)
+    x_debug = np.random.randn(*([args.batch_size]+[args.grid]*3+[1]))
+    print(model.predict(x_debug, batch_size=args.batch_size).shape)
+    sys.exit()
+
+ModelCheckPoint = keras.callbacks.ModelCheckpoint(
+    filepath=os.path.join('weights', 'best.{epoch:03d}.hdf5'),
+    save_best_only=True)
+
+TensorBoard = keras.callbacks.TensorBoard()
+
+EarlyStopping = keras.callbacks.EarlyStopping(
+    monitor='val_acc', patience=10)
+
+if args.rotate:
+    for epoch in range(1, args.epochs+1, args.per_rotation):
+        ((data, label),
+         (test_data, test_label)) = loader.convert_data(
+            args.train_files,
+            args.test_files,
+            args.points,
+            rotate=True,
+            rotate_val=args.rotate_val,
+            grid_size=args.grid)
+        print('epoch: {}/{}'.format(epoch, args.epochs))
+        loss = model.fit(x=data,
+                         y=label,
+                         batch_size=args.batch_size,
+                         epochs=args.per_rotation,
+                         validation_data=(test_data, test_label))
+elif args.rotate_val:
+    for epoch in range(1, args.epochs+1):
+        (x_test, y_test) = loader.convert(args.test_files, grid_size=args.grid)
+        print('epoch: {}/{}'.format(epoch, args.epochs))
+        loss = model.fit(x=data,
+                         y=label,
+                         batch_size=args.batch_size,
+                         epochs=args.per_rotation,
+                         validation_data=(test_data, test_label))
+else:
+    ((data, label),
+     (test_data, test_label)) = loader.convert_data(
+        args.train_files,
+        args.test_files,
+        args.points,
+        rotate=False,
+        rotate_val=False,
+        grid_size=args.grid)
+    loss = model.fit(x=data,
+                     y=label,
+                     batch_size=args.batch_size,
+                     epochs=args.epochs,
+                     callbacks=[ModelCheckPoint,
+                                TensorBoard,
+                                EarlyStopping],
+                     validation_data=(test_data, test_label))
+
+if args.save_history:
+    np.save(file='./history', arr=loss.history)
+
+if args.plot:
+    for item in loss.history.keys():
+        plt.plot(loss.history[item], label=item)
+    plt.legend()
+    plt.savefig('./loss_metrics.jpg')
+
+# on original data
+(x_train, y_train), (x_test, y_test) = loader.convert_data(
+    args.train_files, args.test_files, args.points, grid_size=args.grid)
+(loss, acc) = model.evaluate(x=x_train, y=y_train)
+print()
+print('training loss: {}, training accuracy: {}'.format(loss, acc))
+(loss, acc) = model.evaluate(x=x_test, y=y_test)
+print()
+print('testing loss: {}, testing accuracy: {}'.format(loss, acc))
+
+K.clear_session()
